@@ -1,0 +1,95 @@
+Write a single complete bash script that builds an Android video player app from scratch on a Linux machine and produces a signed release APK. Follow every detail exactly:
+Project identity
+
+Package name: com.example.mxplayer, app label: javagoat
+Directory root: current directory; Java source under app/src/main/java/com/example/mxplayer
+
+Android SDK setup
+
+Download commandlinetools-linux-10406996_latest.zip from Google, unzip, rename inner folder to latest, place at $HOME/android-sdk/cmdline-tools/latest
+Set ANDROID_HOME=$HOME/android-sdk, update PATH, write local.properties
+Accept all licenses silently; install exactly: platforms;android-34, build-tools;34.0.0, platform-tools
+
+Root Gradle files
+
+settings.gradle: include ':app' only
+gradle.properties: enable AndroidX and Jetifier
+build.gradle: classpath com.android.tools.build:gradle:8.2.0
+
+app/build.gradle
+
+compileSdk 34, minSdk 24, targetSdk 34, versionCode 1, versionName "1.0"
+Release signing config: keystore file ../my-release-key.jks, storePassword and keyPassword both mypassword123, alias my-key-alias
+minifyEnabled false
+Dependencies: appcompat:1.6.1, material:1.10.0, constraintlayout:2.1.4, cardview:1.0.0, media3-exoplayer:1.2.0, media3-ui:1.2.0, glide:4.16.0
+
+Keystore
+
+Generate with keytool: RSA 2048, 10000 days, alias my-key-alias, storepass/keypass mypassword123, dname CN=javagoat, OU=ID, O=Example, L=City, S=State, C=US; suppress errors with || true
+
+AndroidManifest.xml
+
+Permissions: READ_EXTERNAL_STORAGE with maxSdkVersion="32", READ_MEDIA_VIDEO, INTERNET, MODIFY_AUDIO_SETTINGS
+Application: label javagoat, requestLegacyExternalStorage=true, usesCleartextTraffic=true, icons @mipmap/ic_launcher and @mipmap/ic_launcher_round, theme @style/Theme.MXClone
+SplashActivity: exported=true, is the MAIN/LAUNCHER
+MainActivity: exported=false
+PlayerActivity: screenOrientation="sensor", configChanges for orientation, keyboardHidden, screenSize, smallestScreenSize, screenLayout
+
+Colors (colors.xml): primary #0F0F0F, primary_dark #000000, accent #E53935, bg_dark #0A0A0A, surface_dark #1A1A1A, text_light #FFFFFF, text_secondary #9E9E9E
+Theme (themes.xml): Theme.MXClone extending Theme.MaterialComponents.DayNight.NoActionBar, sets colorPrimary, colorPrimaryDark, colorAccent, statusBarColor, windowBackground
+Drawable: bg_duration.xml — shape with solid #CC000000 and corner radius 4dp
+Layouts
+
+activity_splash.xml: RelativeLayout with bg_dark background; single centered TextView id splashText, text javagoat, color #E53935, 44sp bold, letterSpacing 0.05, alpha=0
+activity_main.xml: CoordinatorLayout → AppBarLayout with Toolbar (id toolbar, title "Local Videos", titleTextColor white) + RecyclerView id videoRecyclerView (paddingTop/Bottom 8dp, clipToPadding false, appbar scroll behavior) + ProgressBar id progressBar (centered, gone) + TextView id emptyText (centered, "No videos found", gone)
+item_video.xml: horizontal LinearLayout, padding 12dp, selectable background; CardView 140×80dp surface_dark bg, 8dp corner, 0 elevation containing RelativeLayout with ImageView id videoThumbnail (centerCrop) and TextView id videoDuration (alignParentEnd+Bottom, 4dp margin, bg_duration background, 6dp horizontal + 2dp vertical padding, 11sp bold white); then vertical LinearLayout (weight 1, centerVertical, paddingStart 16dp, paddingEnd 8dp) with TextView id videoTitle (2 lines, ellipsize end, 15sp white) and TextView id videoSize (marginTop 6dp, 13sp text_secondary); then 24×24dp ImageView using @android:drawable/ic_menu_more tinted text_secondary
+activity_player.xml: FrameLayout black background; androidx.media3.ui.PlayerView id playerView (match_parent, use_controller=true, resize_mode=fit); overlay LinearLayout id indicatorLayout (wrap_content, center gravity, bg_duration background, 24dp padding, vertical orientation, gone) containing TextView id indicatorText (22sp bold white)
+
+SplashActivity.java
+
+Animates splashText: alpha to 1f, scaleX/Y to 1.2f, duration 1200ms
+In withEndAction: after 400ms Handler delay, start MainActivity, call finish()
+
+MainActivity.java
+
+On API 33+: request READ_MEDIA_VIDEO; else READ_EXTERNAL_STORAGE; permission request code 100
+Load videos in background thread from MediaStore.Video.Media.EXTERNAL_CONTENT_URI; projection: DATA, TITLE, DURATION, SIZE; sort by DATE_ADDED DESC; skip files where new File(path).exists() is false
+VideoModel static inner class: fields path, title (String), duration, size (long)
+VideoAdapter static inner class with OnVideoClickListener interface
+Duration: if ≥ 3600 seconds → HH:MM:SS else MM:SS
+Size: if ≥ 1073741824 → %.2f GB else %.2f MB
+Glide: DiskCacheStrategy.ALL, placeholder android.R.color.darker_gray
+Video click: launch PlayerActivity with extras "videoPath" and "videoTitle"
+
+PlayerActivity.java
+
+Fields: GestureDetector, ScaleGestureDetector, AudioManager, scaleFactor=1.0f, screenWidth, screenHeight, isLeftHalf boolean, Handler on main looper
+ScaleGestureDetector: multiply scaleFactor by detector scale, clamp 0.5–5.0, apply to playerView.getVideoSurfaceView() scaleX/Y
+GestureDetector:
+
+onDown: set isLeftHalf = e.getX() < screenWidth / 2f; return true
+onScroll: if |deltaX| > |deltaY| return false (ignore horizontal); percent = (e1.getY() - e2.getY()) / screenHeight; left half → adjust window brightness (default 0.5f if <0, add percent×1.5f, clamp 0.01–1.0), show "☀ N%"; right half → compute change as (int)(percent × maxVolume × 1.5f), skip if change==0, clamp and set volume, show "🔊 N%"
+onDoubleTap: toggle RESIZE_MODE_FIT ↔ RESIZE_MODE_ZOOM, reset scaleFactor to 1.0 and video surface scale to 1.0, show "Crop to Fit" or "Fit Screen"
+
+
+dispatchTouchEvent: call both detectors, then super
+showIndicator: set text, set visible, remove handler callbacks, post hide after 1000ms
+initializePlayer: build ExoPlayer, set on playerView, load videoPath extra as URI, prepare and play
+Lifecycle: onStart → initializePlayer; onResume → initializePlayer if null; onPause → pause; onStop → release and null player
+hideSystemUI: API 30+ use WindowInsetsController (hide statusBars+navigationBars, BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE); else legacy SYSTEM_UI_FLAG_IMMERSIVE_STICKY with all hide flags
+
+Icons
+
+ic_launcher_background.xml: shape, solid #E53935
+ic_launcher_foreground.xml: vector 108×108dp, viewport 24×24, white fill, path M8,5v14l11,-7z
+ic_launcher.xml (mipmap-anydpi-v26): adaptive-icon with background and foreground refs
+Copy ic_launcher.xml → ic_launcher_round.xml
+
+Gradle wrapper
+
+Download gradle-8.2-bin.zip from https://services.gradle.org/distributions/
+Unzip with sudo to /opt/gradle
+Run /opt/gradle/gradle-8.2/bin/gradle wrapper --gradle-version 8.2
+chmod +x gradlew
+
+Final build: ./gradlew clean assembleRelease
